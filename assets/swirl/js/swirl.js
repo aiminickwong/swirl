@@ -1198,6 +1198,14 @@ var Swirl;
             config(opt) {
             }
             formatValue(value) {
+                if (value >= 0) {
+                    return this.formatPositiveValue(value);
+                }
+                else {
+                    return "-" + this.formatPositiveValue(-value);
+                }
+            }
+            formatPositiveValue(value) {
                 switch (this.opts.unit) {
                     case "percent:100":
                         return value.toFixed(1) + "%";
@@ -1304,12 +1312,21 @@ var Swirl;
                         {
                             type: 'gauge',
                             radius: '100%',
-                            center: ["50%", "58%"],
+                            center: ["50%", "50%"],
                             max: d.value,
+                            axisLine: {
+                                show: false,
+                                lineStyle: { width: 0, opacity: 0, shadowBlur: 0 },
+                            },
                             axisLabel: { show: false },
+                            axisTick: { show: false },
+                            splitLine: { show: false },
                             pointer: { show: false },
                             detail: {
+                                formatter: this.formatValue.bind(this),
                                 offsetCenter: [0, 0],
+                                fontSize: 64,
+                                fontWeight: 'bold',
                             },
                             data: [{ value: d.value }]
                         }
@@ -1519,7 +1536,7 @@ var Swirl;
                     $elem.remove();
                 }
             }
-            save() {
+            save(asDefault = false) {
                 let charts = [];
                 this.$panel.children().each((index, elem) => {
                     let name = $(elem).data("name");
@@ -1537,7 +1554,7 @@ var Swirl;
                 });
                 let args = {
                     name: this.opts.name,
-                    key: this.opts.key || '',
+                    key: asDefault ? '' : (this.opts.key || ''),
                     charts: charts,
                 };
                 $ajax.post(`/system/chart/save_dashboard`, args).json((r) => {
@@ -1581,6 +1598,9 @@ var Swirl;
                 $("#btn-add-chart").click(this.addChart.bind(this));
                 $("#btn-save").click(() => {
                     this.dashboard.save();
+                });
+                $("#btn-save-as-default").click(() => {
+                    this.dashboard.save(true);
                 });
             }
             showAddDlg() {
@@ -1779,6 +1799,68 @@ var Swirl;
         }
         Config.NewPage = NewPage;
     })(Config = Swirl.Config || (Swirl.Config = {}));
+})(Swirl || (Swirl = {}));
+var Swirl;
+(function (Swirl) {
+    var Container;
+    (function (Container) {
+        class ExecPage {
+            constructor() {
+                this.$cmd = $("#txt-cmd");
+                this.$connect = $("#btn-connect");
+                this.$disconnect = $("#btn-disconnect");
+                this.$connect.click(this.connect.bind(this));
+                this.$disconnect.click(this.disconnect.bind(this));
+                Terminal.applyAddon(fit);
+            }
+            connect(e) {
+                this.$connect.hide();
+                this.$disconnect.show();
+                let url = location.host + location.pathname.substring(0, location.pathname.lastIndexOf("/")) + "/connect?cmd=" + encodeURIComponent(this.$cmd.val());
+                let ws = new WebSocket("ws://" + url);
+                ws.onopen = () => {
+                    this.term = new Terminal();
+                    this.term.on('data', (data) => {
+                        if (ws.readyState == WebSocket.OPEN) {
+                            ws.send(data);
+                        }
+                    });
+                    this.term.open(document.getElementById('terminal-container'));
+                    this.term.focus();
+                    let width = Math.floor(($('#terminal-container').width() - 20) / 8.39);
+                    let height = 30;
+                    this.term.resize(width, height);
+                    this.term.setOption('cursorBlink', true);
+                    this.term.fit();
+                    window.onresize = () => {
+                        this.term.fit();
+                    };
+                    ws.onmessage = (e) => {
+                        this.term.write(e.data);
+                    };
+                    ws.onerror = function (error) {
+                        console.log("error: " + error);
+                    };
+                    ws.onclose = () => {
+                        console.log("close");
+                    };
+                };
+                this.ws = ws;
+            }
+            disconnect(e) {
+                if (this.ws && this.ws.readyState != WebSocket.CLOSED) {
+                    this.ws.close();
+                }
+                if (this.term) {
+                    this.term.destroy();
+                    this.term = null;
+                }
+                this.$connect.show();
+                this.$disconnect.hide();
+            }
+        }
+        Container.ExecPage = ExecPage;
+    })(Container = Swirl.Container || (Swirl.Container = {}));
 })(Swirl || (Swirl = {}));
 var Swirl;
 (function (Swirl) {
@@ -2449,21 +2531,20 @@ var Swirl;
                 let $tr = $(e.target).closest("tr");
                 let name = $tr.find("td:eq(0)").text().trim();
                 Modal.confirm(`Are you sure to remove service: <strong>${name}</strong>?`, "Delete service", (dlg, e) => {
-                    $ajax.post(`${name}/delete`, { names: name }).trigger(e.target).encoder("form").json(() => {
+                    $ajax.post(`${name}/delete`).trigger(e.target).encoder("form").json(() => {
                         $tr.remove();
                         dlg.close();
                     });
                 });
             }
             scaleService(e) {
-                let $target = $(e.target), $tr = $target.closest("tr");
+                let $target = $(e.target), $tr = $target.closest("tr"), name = $tr.find("td:eq(0)").text().trim();
                 let data = {
-                    name: $tr.find("td:eq(0)").text().trim(),
                     count: $target.data("replicas"),
                 };
                 Modal.confirm(`<input name="count" value="${data.count}" class="input" placeholder="Replicas">`, "Scale service", dlg => {
                     data.count = dlg.find("input[name=count]").val();
-                    $ajax.post(`${data.name}/scale`, data).encoder("form").json(() => {
+                    $ajax.post(`${name}/scale`, data).encoder("form").json(() => {
                         location.reload();
                     });
                 });
@@ -2471,7 +2552,7 @@ var Swirl;
             rollbackService(e) {
                 let $tr = $(e.target).closest("tr"), name = $tr.find("td:eq(0)").text().trim();
                 Modal.confirm(`Are you sure to rollback service: <strong>${name}</strong>?`, "Rollback service", dlg => {
-                    $ajax.post(`${name}/rollback`, { name: name }).encoder("form").json(() => {
+                    $ajax.post(`${name}/rollback`).encoder("form").json(() => {
                         dlg.close();
                     });
                 });
@@ -2479,7 +2560,7 @@ var Swirl;
             restartService(e) {
                 let $tr = $(e.target).closest("tr"), name = $tr.find("td:eq(0)").text().trim();
                 Modal.confirm(`Are you sure to restart service: <strong>${name}</strong>?`, "Restart service", dlg => {
-                    $ajax.post(`${name}/restart`, { name: name }).encoder("form").json(() => {
+                    $ajax.post(`${name}/restart`).encoder("form").json(() => {
                         dlg.close();
                     });
                 });
@@ -2839,43 +2920,83 @@ var Swirl;
 (function (Swirl) {
     var Service;
     (function (Service) {
-        class LogsPage {
+        var Modal = Swirl.Core.Modal;
+        class DetailPage {
             constructor() {
-                this.refreshInterval = 3000;
-                this.$line = $("#txt-line");
-                this.$timestamps = $("#cb-timestamps");
-                this.$refresh = $("#cb-refresh");
-                this.$stdout = $("#txt-stdout");
-                this.$stderr = $("#txt-stderr");
-                this.$refresh.change(e => {
-                    let elem = (e.target);
-                    if (elem.checked) {
-                        this.refreshData();
-                    }
-                    else if (this.timer > 0) {
-                        window.clearTimeout(this.timer);
-                        this.timer = 0;
-                    }
-                });
-                this.refreshData();
+                $("#btn-delete").click(this.deleteService.bind(this));
+                $("#btn-scale").click(this.scaleService.bind(this));
+                $("#btn-restart").click(this.restartService.bind(this));
+                $("#btn-rollback").click(this.rollbackService.bind(this));
             }
-            refreshData() {
-                let args = {
-                    line: this.$line.val(),
-                    timestamps: this.$timestamps.prop("checked"),
-                };
-                $ajax.get('fetch_logs', args).json((r) => {
-                    this.$stdout.val(r.stdout);
-                    this.$stderr.val(r.stderr);
-                    this.$stdout.get(0).scrollTop = this.$stdout.get(0).scrollHeight;
-                    this.$stderr.get(0).scrollTop = this.$stderr.get(0).scrollHeight;
+            deleteService(e) {
+                let name = $("#h2-name").text().trim();
+                Modal.confirm(`Are you sure to remove service: <strong>${name}</strong>?`, "Delete service", (dlg, e) => {
+                    $ajax.post(`delete`).trigger(e.target).encoder("form").json(() => {
+                        location.href = "/service/";
+                    });
                 });
-                if (this.$refresh.prop("checked")) {
-                    this.timer = setTimeout(this.refreshData.bind(this), this.refreshInterval);
-                }
+            }
+            scaleService(e) {
+                let data = {
+                    count: $("#span-replicas").text().trim(),
+                };
+                Modal.confirm(`<input name="count" value="${data.count}" class="input" placeholder="Replicas">`, "Scale service", dlg => {
+                    data.count = dlg.find("input[name=count]").val();
+                    $ajax.post(`scale`, data).trigger(e.target).encoder("form").json(() => {
+                        location.reload();
+                    });
+                });
+            }
+            rollbackService(e) {
+                let name = $("#h2-name").text().trim();
+                Modal.confirm(`Are you sure to rollback service: <strong>${name}</strong>?`, "Rollback service", dlg => {
+                    $ajax.post(`rollback`).trigger(e.target).encoder("form").json(() => {
+                        location.reload();
+                    });
+                });
+            }
+            restartService(e) {
+                let name = $("#h2-name").text().trim();
+                Modal.confirm(`Are you sure to restart service: <strong>${name}</strong>?`, "Restart service", dlg => {
+                    $ajax.post(`restart`).trigger(e.target).encoder("form").json(() => {
+                        location.reload();
+                    });
+                });
             }
         }
-        Service.LogsPage = LogsPage;
+        Service.DetailPage = DetailPage;
     })(Service = Swirl.Service || (Swirl.Service = {}));
+})(Swirl || (Swirl = {}));
+var Swirl;
+(function (Swirl) {
+    var Metric;
+    (function (Metric) {
+        var EditTable = Swirl.Core.EditTable;
+        class MetricTable extends EditTable {
+            render() {
+                return `<tr>
+                <td>
+                  <input name="metrics[${this.index}].legend" class="input is-small" placeholder="Legend expression for dataset, e.g. ${name}">
+                </td>
+                <td>
+                  <input name="metrics[${this.index}].query" class="input is-small" placeholder="Prometheus query expression, for service dashboard, you can use '$\{service\}' variable">
+                </td>
+                <td>
+                  <a class="button is-small is-outlined is-danger" data-action="delete-metric">
+                    <span class="icon is-small">
+                      <i class="far fa-trash-alt"></i>
+                    </span>
+                  </a>
+                </td>
+              </tr>`;
+            }
+        }
+        class EditPage {
+            constructor() {
+                new MetricTable("#table-metrics");
+            }
+        }
+        Metric.EditPage = EditPage;
+    })(Metric = Swirl.Metric || (Swirl.Metric = {}));
 })(Swirl || (Swirl = {}));
 //# sourceMappingURL=swirl.js.map

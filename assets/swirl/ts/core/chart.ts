@@ -99,6 +99,14 @@ namespace Swirl.Core {
         }
 
         protected formatValue(value: number): string {
+            if (value >= 0) {
+                return this.formatPositiveValue(value)
+            } else {
+                return "-" + this.formatPositiveValue(-value);
+            }
+        }
+
+        private formatPositiveValue(value: number): string {
             switch (this.opts.unit) {
                 case "percent:100":
                     return value.toFixed(1) + "%";
@@ -216,12 +224,21 @@ namespace Swirl.Core {
                         // name: d.name,
                         type: 'gauge',
                         radius: '100%',
-                        center: ["50%", "58%"], // 仪表位置
+                        center: ["50%", "50%"], // 仪表位置
                         max: d.value,
+                        axisLine: {
+                            show: false,
+                            lineStyle: {width: 0, opacity: 0, shadowBlur: 0},
+                        },
                         axisLabel: {show: false},
+                        axisTick: {show: false},
+                        splitLine: {show: false},
                         pointer: {show: false},
                         detail: {
+                            formatter: this.formatValue.bind(this),
                             offsetCenter: [0, 0],
+                            fontSize: 64,
+                            fontWeight: 'bold',
                         },
                         data: [{value: d.value}]
                     }
@@ -463,7 +480,7 @@ namespace Swirl.Core {
             }
         }
 
-        save() {
+        save(asDefault: boolean = false) {
             let charts: any = [];
             this.$panel.children().each((index: number, elem: Element) => {
                 let name = $(elem).data("name");
@@ -481,7 +498,7 @@ namespace Swirl.Core {
             });
             let args = {
                 name: this.opts.name,
-                key: this.opts.key || '',
+                key: asDefault ? '' : (this.opts.key || ''),
                 charts: charts,
             };
             $ajax.post(`/system/chart/save_dashboard`, args).json<AjaxResult>((r: AjaxResult) => {
@@ -532,6 +549,9 @@ namespace Swirl.Core {
             $("#btn-add-chart").click(this.addChart.bind(this));
             $("#btn-save").click(() => {
                 this.dashboard.save();
+            });
+            $("#btn-save-as-default").click(() => {
+                this.dashboard.save(true);
             });
         }
 
